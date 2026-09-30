@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.water_rules import evaluate_batch
+
 SEED_ROWS: dict[str, list[dict[str, Any]]] = {
     "pipe": [{'id': 1,
   'status': '待移交',
@@ -653,3 +655,192 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '归档日期': '2026-09-03',
   '档案状态': '管网档案样例3'}]
 }
+
+
+def _build_water_seed() -> dict[str, list[dict[str, Any]]]:
+    """水质采样台账示例数据。
+
+    城东片区刻意保留两版口径（V1 浊度上限 1.0，V2 收紧到 0.8）：
+    - 已出结论的批次锁 V1/V2 快照留档，演示口径调整后不被改写；
+    - 待判定批次不锁版本，读取时按现行 V2 实时重算。
+    """
+    v1 = {
+        "余氯": {"min": 0.05, "warn_min": 0.10, "warn_max": 0.30, "max": 0.50},
+        "浊度": {"min": None, "warn_min": None, "warn_max": 0.50, "max": 1.00},
+        "pH": {"min": 6.5, "warn_min": 6.8, "warn_max": 8.0, "max": 8.5},
+    }
+    # 城东 V2：浊度从 1.0 收紧到 0.8，预警带同步收到 0.4
+    v2 = {
+        "余氯": dict(v1["余氯"]),
+        "浊度": {"min": None, "warn_min": None, "warn_max": 0.40, "max": 0.80},
+        "pH": dict(v1["pH"]),
+    }
+
+    districts: list[dict[str, Any]] = []
+    standards: list[dict[str, Any]] = []
+    points: list[dict[str, Any]] = []
+    samples: list[dict[str, Any]] = []
+
+    def add_district(did: int, code: str, name: str, current_sid: int) -> dict[str, Any]:
+        district = {
+            "id": did,
+            "片区编号": code,
+            "片区名称": name,
+            "current_standard_id": current_sid,
+        }
+        districts.append(district)
+        return district
+
+    def add_standard(sid: int, did: int, version: int, limits: dict[str, Any],
+                     effective: str, note: str) -> dict[str, Any]:
+        standard = {
+            "id": sid,
+            "片区ID": did,
+            "版本": version,
+            "生效时间": effective,
+            "限值": limits,
+            "备注": note,
+        }
+        standards.append(standard)
+        return standard
+
+    def add_point(pid: int, did: int, code: str, name: str, location: str) -> dict[str, Any]:
+        point = {
+            "id": pid,
+            "采样点编号": code,
+            "采样点名称": name,
+            "片区ID": did,
+            "位置": location,
+            "启用": True,
+        }
+        points.append(point)
+        return point
+
+    def add_sample(
+        sid: int,
+        point: dict[str, Any],
+        district: dict[str, Any],
+        sampled_at: str,
+        personnel: str,
+        readings: dict[str, float],
+        *,
+        status: str,
+        locked_standard: dict[str, Any] | None,
+        reason: str = "",
+    ) -> None:
+        row: dict[str, Any] = {
+            "id": sid,
+            "编号": f"WS-{sid:04d}",
+            "采样点ID": point["id"],
+            "采样点编号": point["采样点编号"],
+            "采样点名称": point["采样点名称"],
+            "片区ID": district["id"],
+            "片区名称": district["片区名称"],
+            "采样时间": sampled_at,
+            "采样人员": personnel,
+            "readings": dict(readings),
+            "状态": status,
+            "超标原因": reason,
+        }
+        if status == "已判定" and locked_standard is not None:
+            judged = evaluate_batch(locked_standard["限值"], readings)
+            row["locked"] = {
+                "标准ID": locked_standard["id"],
+                "版本": locked_standard["版本"],
+                "conclusion": judged["conclusion"],
+                "metrics": judged["metrics"],
+                "超标原因": reason if judged["conclusion"] == "超标" else "",
+                "出具时间": sampled_at[:16],
+            }
+            row["超标原因"] = row["locked"]["超标原因"]
+        samples.append(row)
+
+    # 城东：两版口径，V2 现行
+    d1 = add_district(1, "WQ-D01", "城东片区", 2)
+    add_standard(1, 1, 1, v1, "2026-09-01 08:00", "建片区初始口径")
+    add_standard(2, 1, 2, v2, "2026-09-25 09:00", "浊度限值由 1.0 收紧至 0.8")
+    p1 = add_point(1, 1, "WQ-001", "城东出厂水", "城东水厂出水口")
+    p2 = add_point(2, 1, "WQ-002", "城东管网末梢", "河滨路 18 号门前消火栓")
+
+    # 城西、城南：仅 V1
+    d2 = add_district(2, "WQ-D02", "城西片区", 3)
+    add_standard(3, 2, 1, {k: dict(v) for k, v in v1.items()}, "2026-09-01 08:00", "建片区初始口径")
+    add_point(3, 2, "WQ-003", "城西加压泵站", "城西加压泵站进水口")
+    add_point(4, 2, "WQ-004", "城西二次供水", "梧桐苑小区 3 号楼水箱")
+
+    d3 = add_district(3, "WQ-D03", "城南片区", 4)
+    add_standard(4, 3, 1, {k: dict(v) for k, v in v1.items()}, "2026-09-01 08:00", "建片区初始口径")
+    add_point(5, 3, "WQ-005", "城南出厂水", "城南水厂出水口")
+    add_point(6, 3, "WQ-006", "城南管网末梢", "科创园 B 座北侧采样井")
+
+    # 城东 WQ-001：一条 V1 达标留档（V2 之后不被改写），一条 V2 预警留档
+    add_sample(
+        1, p1, d1, "2026-09-20 09:00", "王水质",
+        {"余氯": 0.20, "浊度": 0.45, "pH": 7.2},
+        status="已判定", locked_standard=standards[0],
+    )
+    add_sample(
+        2, p1, d1, "2026-09-26 09:00", "王水质",
+        {"余氯": 0.22, "浊度": 0.45, "pH": 7.3},
+        status="已判定", locked_standard=standards[1],
+    )
+    # 城东 WQ-002：待判定超标（登记时已要求写明原因，出具结论前仍按现行 V2 实时判定）
+    add_sample(
+        3, p2, d1, "2026-09-27 10:30", "李采样",
+        {"余氯": 0.03, "浊度": 0.30, "pH": 7.1},
+        status="待判定", locked_standard=None,
+        reason="末梢管段停水检修后复供，余氯尚未恢复，已安排冲洗补氯",
+    )
+    # 城东 WQ-002：待判定，浊度 0.90 在 V1 达标、V2 超标——演示口径调整自动重算
+    add_sample(
+        4, p2, d1, "2026-09-28 10:30", "李采样",
+        {"余氯": 0.15, "浊度": 0.90, "pH": 7.0},
+        status="待判定", locked_standard=None,
+    )
+    # 城西 WQ-003：已判定达标
+    add_sample(
+        5, points[2], d2, "2026-09-22 08:30", "赵检测",
+        {"余氯": 0.18, "浊度": 0.35, "pH": 7.4},
+        status="已判定", locked_standard=standards[2],
+    )
+    # 城西 WQ-004：已判定超标留档（原因必填）
+    add_sample(
+        6, points[3], d2, "2026-09-23 15:00", "赵检测",
+        {"余氯": 0.16, "浊度": 1.60, "pH": 7.2},
+        status="已判定", locked_standard=standards[2],
+        reason="小区水箱清洗后泥沙未排净，已重新清洗排空并复检",
+    )
+    # 城西 WQ-003：待判定达标
+    add_sample(
+        7, points[2], d2, "2026-09-29 08:30", "赵检测",
+        {"余氯": 0.19, "浊度": 0.30, "pH": 7.3},
+        status="待判定", locked_standard=None,
+    )
+    # 城南 WQ-005：已判定达标
+    add_sample(
+        8, points[4], d3, "2026-09-21 10:00", "孙化验",
+        {"余氯": 0.25, "浊度": 0.20, "pH": 7.5},
+        status="已判定", locked_standard=standards[3],
+    )
+    # 城南 WQ-006：已判定预警留档（pH 偏低）
+    add_sample(
+        9, points[5], d3, "2026-09-24 14:00", "孙化验",
+        {"余氯": 0.12, "浊度": 0.28, "pH": 6.7},
+        status="已判定", locked_standard=standards[3],
+    )
+    # 城南 WQ-006：待判定达标，凑出该点位「最近一次」
+    add_sample(
+        10, points[5], d3, "2026-09-29 14:00", "孙化验",
+        {"余氯": 0.15, "浊度": 0.31, "pH": 7.0},
+        status="待判定", locked_standard=None,
+    )
+
+    return {
+        "water_district": districts,
+        "water_standard": standards,
+        "water_point": points,
+        "water_sample": samples,
+    }
+
+
+SEED_ROWS.update(_build_water_seed())

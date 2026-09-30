@@ -4,19 +4,24 @@
 """
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from app.seed import SEED_ROWS
+
+# 水质台账的内部表（片区/口径/采样点/批次）由专属统计页汇总，
+# 不进通用运营概览的「业务模块」表，避免把一张拆成四条计数。
+INTERNAL_TABLE_PREFIX = "water_"
 
 
 class Store:
     def __init__(self) -> None:
         self._tables: dict[str, list[dict[str, Any]]] = {
-            name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
+            name: copy.deepcopy(rows) for name, rows in SEED_ROWS.items()
         }
 
     def module_names(self) -> list[str]:
-        return sorted(self._tables)
+        return sorted(name for name in self._tables if not name.startswith(INTERNAL_TABLE_PREFIX))
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
