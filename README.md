@@ -67,6 +67,7 @@ npm run dev
 | 公众诉求 | `complaint` | 诉求记录 | 诉求编号、诉求来源、诉求内容 |
 | 养护资金 | `fund` | 资金记录 | 资金编号、费用类别、项目名称 |
 | 管网档案 | `archive` | 档案记录 | 档案编号、关联管段、档案类别 |
+| 水质采样检测 | `water_quality` | 片区、采样点、限值版本、采样批次 | 采样时间、余氯、浊度、pH、结论、超标原因 |
 
 ## 约定
 
@@ -74,3 +75,4 @@ npm run dev
   `backend/app/routers/<模块>.py`，业务规则在 `backend/app/services/<模块>.py`。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+- 水质限值按片区版本化：发布新口径只重算未出结论的采样批次，已出结论记录保留当时版本。

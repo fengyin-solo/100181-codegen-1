@@ -28,20 +28,27 @@ class Store:
         return None
 
     def overview(self) -> dict[str, object]:
+        display_names = {"water_samples": "水质采样检测"}
+        helper_modules = {"water_areas", "water_points", "water_standards"}
         modules: list[dict[str, object]] = []
         for name in self.module_names():
+            if name in helper_modules:
+                continue
             rows = self.rows(name)
             modules.append({
-                "name": name,
+                "name": display_names.get(name, name),
+                "key": name,
                 "created": len(rows),
                 "pending": sum(1 for row in rows if row.get("pending")),
                 "abnormal": sum(1 for row in rows if row.get("abnormal")),
             })
+        water_exceeded = sum(1 for row in self.rows("water_samples") if row.get("abnormal"))
         cards = [
             {"label": "业务模块", "value": len(modules)},
             {"label": "今日新增", "value": sum(int(item["created"]) for item in modules)},
             {"label": "待处理", "value": sum(int(item["pending"]) for item in modules)},
             {"label": "异常量", "value": sum(int(item["abnormal"]) for item in modules)},
+            {"label": "水质超标批次", "value": water_exceeded},
         ]
         return {"cards": cards, "modules": modules}
 

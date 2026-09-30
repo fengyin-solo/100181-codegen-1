@@ -19,3 +19,14 @@ export async function fetchJson<T>(path: string): Promise<T> {
   }
   return (await response.json()) as T
 }
+
+export async function sendJson<T>(path: string, method: 'POST' | 'PUT', body: unknown): Promise<T> {
+  const response = await request(path, {
+    method,
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    throw new Error(`接口返回 ${response.status}，数据未更新`)
+  }
+  return (await response.json()) as T
+}
